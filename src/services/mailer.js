@@ -91,6 +91,41 @@ export function sendPasswordResetCode({ to, name, code, tenant }) {
   });
 }
 
+/** E-mail de aviso simples (sem código), na cor da operadora. */
+export function noticeEmailHtml({ brand, color, title, name, paragraphs, footer }) {
+  const accent = /^#[0-9a-fA-F]{6}$/.test(color ?? '') ? color : '#1f3a5f';
+  const body = paragraphs.map((p) => `<p style="margin:0 0 16px;line-height:1.5">${escapeHtml(p)}</p>`).join('\n        ');
+  return `<!doctype html>
+<html lang="pt-BR"><body style="margin:0;padding:24px;background:#f4f5f7;font-family:Arial,Helvetica,sans-serif;color:#1d2433">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td align="center">
+    <table role="presentation" width="480" cellspacing="0" cellpadding="0" style="max-width:480px;background:#ffffff;border-radius:12px;overflow:hidden">
+      <tr><td style="background:${accent};padding:20px 28px;color:#ffffff;font-size:18px;font-weight:bold">${escapeHtml(brand)}</td></tr>
+      <tr><td style="padding:28px">
+        <h1 style="margin:0 0 12px;font-size:20px">${escapeHtml(title)}</h1>
+        <p style="margin:0 0 16px;line-height:1.5">Olá, ${escapeHtml(name)}!</p>
+        ${body}
+        <p style="margin:8px 0 0;font-size:13px;color:#8a93a3">${escapeHtml(footer)}</p>
+      </td></tr>
+    </table>
+  </td></tr></table>
+</body></html>`;
+}
+
+/** Avisa o motorista por e-mail que o cadastro foi aprovado ou reprovado (reason = motivo, no caso de reprovação). */
+export function sendDriverReviewEmail({ to, name, tenant, approved, reason }) {
+  const brand = brandName(tenant);
+  const title = approved ? 'Cadastro aprovado!' : 'Seu cadastro precisa de ajustes';
+  const paragraphs = approved
+    ? [`Seu cadastro como motorista da ${brand} foi aprovado.`, 'Abra o app, toque em ficar online e comece a receber corridas.']
+    : [`A análise do seu cadastro na ${brand} encontrou um ponto a corrigir:`, reason, 'Abra o app, ajuste o que for preciso e reenvie para uma nova análise.'];
+  return sendMail({
+    to,
+    subject: `${brand}: ${title.toLowerCase().replace(/^./, (c) => c.toUpperCase())}`,
+    text: `Olá, ${name}!\n\n${paragraphs.join('\n\n')}`,
+    html: noticeEmailHtml({ brand, color: tenant?.brand?.primaryColor, title, name, paragraphs, footer: `Mensagem automática da ${brand}.` }),
+  });
+}
+
 /** Confere host, porta, usuário e senha do SMTP sem enviar nada. */
 export async function verifyMailer() {
   const mailer = getTransporter();

@@ -6,13 +6,17 @@ const ENDPOINT = 'https://exp.host/--/api/v2/push/send';
 
 export const isExpoToken = (token) => typeof token === 'string' && /^Expo(nent)?PushToken\[[^\]]+\]$/.test(token);
 
-export async function sendPush(token, { title, body, data = {} }, fetchImpl = fetch) {
+/**
+ * `ttl` = por quantos segundos a Expo tenta entregar se o celular estiver sem sinal.
+ * Ofertas de corrida valem poucos segundos; avisos (ex.: cadastro aprovado) valem por horas.
+ */
+export async function sendPush(token, { title, body, data = {}, ttl = 30, channelId = 'ofertas' }, fetchImpl = fetch) {
   if (!isExpoToken(token)) return false;
   try {
     const response = await fetchImpl(ENDPOINT, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ to: token, title, body, data, sound: 'default', priority: 'high', channelId: 'ofertas', ttl: 30 }),
+      body: JSON.stringify({ to: token, title, body, data, sound: 'default', priority: 'high', channelId, ttl }),
     });
     return response.ok;
   } catch (error) {

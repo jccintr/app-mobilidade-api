@@ -7,6 +7,21 @@ import { conflict, forbidden, notFound, unauthorized } from '../../utils/errors.
 import { signToken } from '../../utils/tokens.js';
 import { storage } from '../../services/storage/index.js';
 import { isProfileComplete } from '../accounts/driverStatus.js';
+import { sendPush } from '../../services/push.js';
+import { sendDriverReviewEmail } from '../../services/mailer.js';
+
+const DAY = 24 * 60 * 60;
+
+/**
+ * Avisa o motorista por push e por e-mail (melhor esforço: se algum falhar, o app também confere o status sozinho).
+ * O e-mail garante o aviso mesmo se o motorista desligou as notificações do celular.
+ */
+function notifyDriver(driver, tenant, { title, body, type, approved, reason }) {
+  sendPush(driver.pushToken, { title, body, data: { type }, ttl: DAY, channelId: 'ofertas' }).catch(() => {});
+  sendDriverReviewEmail({ to: driver.email, name: driver.name, tenant, approved, reason }).catch((error) =>
+    console.error('[mailer] falha ao enviar aviso de análise:', error?.message ?? error),
+  );
+}
 
 const DUMMY_HASH = bcrypt.hashSync('senha-falsa-para-igualar-o-tempo', 10);
 
@@ -96,6 +111,12 @@ export const adminController = {
     driver.approvedBy = req.user._id;
     driver.rejectionReason = undefined;
     await driver.save();
+    notifyDriver(driver, req.tenant, {
+      approved: true,
+      type: 'driver:approved',
+      title: 'Cadastro aprovado!',
+      body: `Você já pode ficar online e receber corridas${req.tenant.brand?.displayName ? ` na ${req.tenant.brand.displayName}` : ''}.`,
+    });
     res.json({ driver });
   },
 
@@ -108,6 +129,13 @@ export const adminController = {
     driver.rejectionReason = req.valid.reason;
     driver.online = false;
     await driver.save();
+    notifyDriver(driver, req.tenant, {
+      approved: false,
+      reason: req.valid.reason,
+      type: 'driver:rejected',
+      title: 'Cadastro precisa de ajustes',
+      body: `${req.valid.reason} Abra o app para corrigir e reenviar.`,
+    });
     res.json({ driver });
   },
 
