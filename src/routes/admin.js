@@ -20,11 +20,14 @@ import {
   simulateSchema,
   updateSettingsSchema,
 } from '../modules/admin/schemas.js';
+import { emailOnlySchema, resetPasswordSchema } from '../modules/accounts/schemas.js';
 
 /** Painel da operadora (tudo filtrado pela operadora do X-Tenant). */
 export const adminRouter = Router();
 
 adminRouter.post('/login', authLimiter, validate(adminLoginSchema), asyncHandler(c.login));
+adminRouter.post('/password/request', authLimiter, validate(emailOnlySchema), asyncHandler(c.passwordRequest));
+adminRouter.post('/password/reset', authLimiter, validate(resetPasswordSchema), asyncHandler(c.passwordReset));
 
 adminRouter.use(authenticate('operator_admin'));
 adminRouter.get('/me', c.me);

@@ -3,12 +3,13 @@ import { AdminUser } from '../../models/AdminUser.js';
 import { Driver } from '../../models/Driver.js';
 import { Passenger } from '../../models/Passenger.js';
 import { Ride } from '../../models/Ride.js';
-import { conflict, forbidden, notFound, unauthorized } from '../../utils/errors.js';
+import { AppError, conflict, forbidden, notFound, unauthorized } from '../../utils/errors.js';
+import { checkCode, generateCode, isTooSoon, newCodeRecord } from '../../utils/codes.js';
 import { signToken } from '../../utils/tokens.js';
 import { storage } from '../../services/storage/index.js';
 import { isProfileComplete } from '../accounts/driverStatus.js';
 import { sendPush } from '../../services/push.js';
-import { sendDriverReviewEmail } from '../../services/mailer.js';
+import { sendDriverReviewEmail, sendPasswordResetCode } from '../../services/mailer.js';
 
 const DAY = 24 * 60 * 60;
 
@@ -24,6 +25,22 @@ function notifyDriver(driver, tenant, { title, body, type, approved, reason }) {
 }
 
 const DUMMY_HASH = bcrypt.hashSync('senha-falsa-para-igualar-o-tempo', 10);
+
+const codeError = (result) => {
+  switch (result) {
+    case 'locked':
+      return new AppError(429, 'TOO_MANY_ATTEMPTS', 'Muitas tentativas. Solicite um novo código.');
+    case 'missing':
+    case 'expired':
+      return new AppError(400, 'CODE_EXPIRED', 'Código expirado. Solicite um novo.');
+    default:
+      return new AppError(400, 'INVALID_CODE', 'Código incorreto.');
+  }
+};
+
+/** Administrador da operadora pelo e-mail (com os campos escondidos que a recuperação precisa). */
+const findOperatorAdmin = (req, email, fields) =>
+  AdminUser.findOne({ tenantId: req.tenant._id, email, role: 'operator_admin' }).select(fields);
 
 const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -63,6 +80,36 @@ export const adminController = {
 
     await AdminUser.updateOne({ _id: admin._id }, { lastLoginAt: new Date() });
     res.json({ token: signToken(admin, 'operator_admin'), user: admin });
+  },
+
+  // ---- recuperação de senha do administrador (resposta igual exista ou não a conta) ----
+  async passwordRequest(req, res) {
+    const admin = await findOperatorAdmin(req, req.valid.email, '+passwordReset');
+    if (admin?.active && !isTooSoon(admin.passwordReset)) {
+      const code = generateCode();
+      admin.passwordReset = newCodeRecord(code);
+      await admin.save();
+      sendPasswordResetCode({ to: admin.email, name: admin.name, code, tenant: req.tenant }).catch((error) =>
+        console.error('[mailer] falha ao enviar código de recuperação do admin:', error?.message ?? error),
+      );
+    }
+    res.json({ sent: true });
+  },
+
+  async passwordReset(req, res) {
+    const { email, code, password } = req.valid;
+    const admin = await findOperatorAdmin(req, email, '+passwordReset +passwordHash');
+    const result = admin?.active ? checkCode(admin.passwordReset, code) : 'invalid';
+    if (result !== 'ok') {
+      if (admin && result === 'invalid') await AdminUser.updateOne({ _id: admin._id }, { $inc: { 'passwordReset.attempts': 1 } });
+      throw codeError(result);
+    }
+
+    admin.passwordHash = await bcrypt.hash(password, 10);
+    admin.passwordReset = undefined;
+    admin.tokenVersion = (admin.tokenVersion ?? 0) + 1; // encerra as sessões abertas com a senha antiga
+    await admin.save();
+    res.json({ ok: true });
   },
 
   me(req, res) {

@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { codeSchema } from './accountShared.js';
 
 const { Schema } = mongoose;
 
@@ -16,6 +17,7 @@ const adminUserSchema = new Schema(
     passwordHash: { type: String, required: true, select: false },
     active: { type: Boolean, default: true },
     tokenVersion: { type: Number, default: 0 },
+    passwordReset: { type: codeSchema, select: false, default: undefined }, // código de recuperação (só o hash)
     lastLoginAt: Date,
   },
   { timestamps: true },
@@ -30,6 +32,7 @@ adminUserSchema.set('toJSON', {
     delete ret.__v;
     delete ret.passwordHash;
     delete ret.tokenVersion;
+    delete ret.passwordReset;
     return ret;
   },
 });
