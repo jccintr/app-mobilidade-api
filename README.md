@@ -84,7 +84,7 @@ Admin: `GET /admin/dashboard` (números do início), `GET /admin/live` (motorist
 
 Estados: `requested → accepted → arrived → in_progress → completed`, com `cancelled` (passageiro até a chegada; motorista após aceitar; nunca em andamento) e `no_driver` (ninguém aceitou). A máquina de estados fica em `src/rides/stateMachine.js`.
 
-- **Preço:** sempre calculado no servidor, pela regra ativa da operadora, e gravado na corrida junto com a versão da regra. Ao finalizar, espera (`waitMinutes`) e pedágio (`tolls`) informados pelo motorista recalculam o valor.
+- **Preço:** sempre calculado no servidor, pela regra ativa da operadora, e gravado na corrida junto com a versão da regra. Ao finalizar, o pedágio (`tolls`) informado pelo motorista recalcula o valor. Não há cobrança de espera.
 - **Despacho:** uma oferta por vez ao motorista aprovado, online, com posição recente e do tipo de veículo pedido, ordenado pela distância até a origem (índice geográfico do Mongo). Recusou ou deixou vencer: vai para o próximo, até `MAX_OFFERS` ou o fim da janela `DISPATCH_SEARCH_SECONDS` (então a corrida vira `no_driver`).
 - **Concorrência:** aceitar, cancelar e as demais trocas de estado são atômicas no banco; dois aceites simultâneos não passam, e índices únicos impedem duas corridas vivas para o mesmo passageiro ou motorista.
 - **Chat:** a regra é imposta no servidor (REST e socket): só com corrida `accepted`, `arrived` ou `in_progress`. Depois, o histórico segue legível.
@@ -102,10 +102,24 @@ Posição: vai ao passageiro a cada ponto recebido e é gravada no banco no máx
 ### Limites conhecidos desta etapa
 
 - Timers de oferta em memória: serve para **uma instância** da API (um sweeper retoma o fluxo após reinício). Para várias instâncias, use uma fila (ex.: Redis).
-- Se o motorista cancela após aceitar, a corrida termina (não é re-despachada ainda). Sem taxa de cancelamento.
+- Se o motorista cancela após aceitar, a corrida termina (não é re-despachada ainda). Sem taxa de cancelamento para o passageiro.
 - Pagamento só registra a forma (`cash` ou `pix_direct`); não há cobrança dentro do app.
 - Zonas (ex.: rodoviária) ainda não são detectadas automaticamente: `zones` vai vazio no cálculo.
 - Um socket já conectado só é revalidado na próxima conexão (bloqueio/troca de senha derruba na reconexão).
+
+## Taxa da operadora e créditos do motorista
+
+O passageiro paga a corrida direto ao motorista. A operadora cobra do motorista uma **taxa por corrida** — valor fixo, percentual sobre o valor sem pedágio, ou os dois (`GET|PATCH /admin/settings`, bloco `billing`; tudo zerado = cobrança desligada). A taxa é paga com **créditos pré-pagos**:
+
+- A taxa é calculada no pedido e gravada na corrida (`fee`). O despacho só oferece a corrida a quem tem saldo para ela, e o **aceite desconta a taxa** do saldo (atômico; se o aceite falhar, a cobrança é desfeita).
+- **Passageiro cancela** depois do aceite: a taxa volta ao motorista. **Motorista cancela**: a taxa não volta.
+- Créditos **não expiram e não são reembolsados**. Saldo em `Driver.wallet.balanceCents`; cada movimentação fica no extrato (`WalletEntry`: `purchase`, `welcome`, `ride_fee`, `ride_refund`, `adjustment`), com índices únicos contra lançamento repetido.
+- **Compra via Pix** (mesmo fluxo do Delivroo Express; gerador do BR Code copiado do Delivroo v2, `src/utils/pix.js`): o motorista escolhe um pacote, recebe QR + copia e cola na chave Pix da operadora (com o código da compra como identificador), paga e toca em "Já paguei" (comprovante opcional, privado). A operadora é avisada por e-mail (`billing.notifyEmail` ou os admins) e em tempo real (`credit:informed` no socket do painel), confere o Pix e confirma: só então o crédito entra. Uma compra em aberto por motorista; sem "Já paguei", expira em 3 dias.
+- **Boas-vindas:** `billing.welcomeCreditCents` é creditado uma vez, quando o admin aprova o motorista. `POST /admin/credits/welcome-existing` dá o crédito aos já aprovados que não receberam.
+- **Saldo baixo:** push quando o saldo cai abaixo de `billing.lowBalanceCents`.
+
+Motorista (`/drivers`): `GET /me/wallet` (saldo, regras e compra em aberto), `GET /me/wallet/entries`, `GET /credits/packages`, `GET|POST /credits/purchases`, `GET /credits/purchases/:id`, `POST /credits/purchases/:id/inform` (multipart opcional: `receipt`, `payerNote`), `POST /credits/purchases/:id/cancel`.
+Admin: `GET|POST /admin/credit-packages`, `PATCH|DELETE /admin/credit-packages/:id`, `GET /admin/credit-purchases` (`status=open|pending|informed|...`), `GET /admin/credit-purchases/summary`, `GET /admin/credit-purchases/:id/receipt`, `POST /admin/credit-purchases/:id/confirm|reject`, `GET /admin/drivers/:id/wallet`, `POST /admin/drivers/:id/wallet/adjust`, `POST /admin/credits/welcome-existing`. O `GET /admin/dashboard` traz `billing` (taxas e créditos vendidos hoje, compras aguardando confirmação).
 
 ## Armazenamento
 

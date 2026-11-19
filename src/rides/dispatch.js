@@ -53,10 +53,14 @@ async function findCandidate(ride, now) {
   const alreadyOffered = ride.offers.map((offer) => offer.driverId);
   const freshAfter = new Date(now.getTime() - env.rides.locationMaxAgeSeconds * 1000);
 
+  // Com taxa da operadora, só recebe a oferta quem tem créditos para pagá-la.
+  const feeCents = ride.fee?.status === 'pending' ? ride.fee.totalCents : 0;
+
   return Driver.findOne({
     tenantId: ride.tenantId,
     status: 'approved',
     online: true,
+    ...(feeCents > 0 ? { 'wallet.balanceCents': { $gte: feeCents } } : {}),
     'vehicle.type': ride.vehicleType,
     locationUpdatedAt: { $gte: freshAfter },
     _id: { $nin: [...busy, ...alreadyOffered] },

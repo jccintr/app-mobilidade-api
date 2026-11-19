@@ -1,6 +1,9 @@
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { validate } from '../middlewares/validate.js';
-import { documentUpload } from '../middlewares/upload.js';
+import { documentUpload, receiptUpload } from '../middlewares/upload.js';
+import { requireVerified } from '../middlewares/auth.js';
+import { driverCreditsController as credits } from '../modules/credits/driverCreditsController.js';
+import { createPurchaseSchema, idParam, informSchema, pageQuery } from '../modules/credits/schemas.js';
 import { driverController } from '../modules/accounts/driverController.js';
 import { documentParamSchema, vehicleSchema } from '../modules/accounts/schemas.js';
 import { driverRideController as rides, requireApprovedDriver } from '../modules/rides/driverRideController.js';
@@ -50,3 +53,15 @@ driversRouter.post('/rides/:id/cancel', byId, validate(cancelSchema), asyncHandl
 driversRouter.post('/rides/:id/rate', byId, validate(rateSchema), asyncHandler(rides.rate));
 driversRouter.get('/rides/:id/messages', byId, validate(messagesQuery, 'query'), asyncHandler(rides.messages));
 driversRouter.post('/rides/:id/messages', byId, validate(messageSchema), asyncHandler(rides.sendMessage));
+
+// ---- créditos (saldo pré-pago que paga a taxa da operadora; compra via Pix na página web do motorista) ----
+// Qualquer motorista com e-mail confirmado pode comprar (inclusive antes da aprovação); corridas exigem aprovação.
+const purchaseId = validate(idParam, 'params');
+driversRouter.get('/me/wallet', asyncHandler(credits.wallet));
+driversRouter.get('/me/wallet/entries', validate(pageQuery, 'query'), asyncHandler(credits.entries));
+driversRouter.get('/credits/packages', asyncHandler(credits.packages));
+driversRouter.get('/credits/purchases', validate(pageQuery, 'query'), asyncHandler(credits.listPurchases));
+driversRouter.post('/credits/purchases', requireVerified, validate(createPurchaseSchema), asyncHandler(credits.createPurchase));
+driversRouter.get('/credits/purchases/:id', purchaseId, asyncHandler(credits.getPurchase));
+driversRouter.post('/credits/purchases/:id/inform', purchaseId, receiptUpload, validate(informSchema), asyncHandler(credits.inform));
+driversRouter.post('/credits/purchases/:id/cancel', purchaseId, asyncHandler(credits.cancelPurchase));

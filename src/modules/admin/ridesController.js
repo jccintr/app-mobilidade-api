@@ -1,6 +1,8 @@
 import { Driver } from '../../models/Driver.js';
 import { Passenger } from '../../models/Passenger.js';
 import { Ride } from '../../models/Ride.js';
+import { CreditPurchase } from '../../models/CreditPurchase.js';
+import { WalletEntry } from '../../models/WalletEntry.js';
 import { localTimeParts } from '../../pricing/engine.js';
 import { fromPoint } from '../../utils/geo.js';
 import { Tenant } from '../../models/Tenant.js';
@@ -49,7 +51,7 @@ export const ridesAdminController = {
     const local = localTimeParts(now, tz);
     const startOfToday = new Date(now.getTime() - local.minutesOfDay * 60_000 - now.getUTCSeconds() * 1000 - now.getUTCMilliseconds());
 
-    const [driversByStatus, driversOnline, passengers, today] = await Promise.all([
+    const [driversByStatus, driversOnline, passengers, today, feesToday, creditsToday, informedPurchases] = await Promise.all([
       Driver.aggregate([{ $match: { tenantId } }, { $group: { _id: '$status', count: { $sum: 1 } } }]),
       Driver.countDocuments({ tenantId, online: true }),
       Passenger.countDocuments({ tenantId }),
@@ -57,6 +59,17 @@ export const ridesAdminController = {
         { $match: { tenantId, createdAt: { $gte: startOfToday } } },
         { $group: { _id: '$status', count: { $sum: 1 }, cents: { $sum: '$totalCents' } } },
       ]),
+      // Receita da operadora hoje: taxas cobradas menos taxas devolvidas (cancelamento pelo passageiro).
+      WalletEntry.aggregate([
+        { $match: { tenantId, type: { $in: ['ride_fee', 'ride_refund'] }, createdAt: { $gte: startOfToday } } },
+        { $group: { _id: null, cents: { $sum: '$amountCents' } } },
+      ]),
+      // Dinheiro que entrou hoje pela venda de créditos (compras confirmadas hoje).
+      CreditPurchase.aggregate([
+        { $match: { tenantId, status: 'confirmed', confirmedAt: { $gte: startOfToday } } },
+        { $group: { _id: null, cents: { $sum: '$package.priceCents' }, count: { $sum: 1 } } },
+      ]),
+      CreditPurchase.countDocuments({ tenantId, status: 'informed' }),
     ]);
 
     const drivers = Object.fromEntries(driversByStatus.map((row) => [row._id, row.count]));
@@ -69,6 +82,12 @@ export const ridesAdminController = {
         total: today.reduce((sum, row) => sum + row.count, 0),
         byStatus: rides,
         revenue: (today.find((row) => row._id === 'completed')?.cents ?? 0) / 100,
+      },
+      billing: {
+        feesTodayCents: -(feesToday[0]?.cents ?? 0),
+        creditsSoldTodayCents: creditsToday[0]?.cents ?? 0,
+        creditPurchasesToday: creditsToday[0]?.count ?? 0,
+        purchasesAwaitingConfirmation: informedPurchases,
       },
     });
   },

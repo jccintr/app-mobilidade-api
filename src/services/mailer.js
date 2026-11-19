@@ -126,6 +126,50 @@ export function sendDriverReviewEmail({ to, name, tenant, approved, reason }) {
   });
 }
 
+const brl = (cents) => (cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
+/** Avisa a operadora que um motorista disse ter pago uma compra de créditos (conferir o Pix e confirmar no painel). */
+export function sendCreditInformedEmail({ to, tenant, driver, purchase }) {
+  const brand = brandName(tenant);
+  const title = 'Pagamento de créditos informado';
+  const paragraphs = [
+    `${driver.name} informou o pagamento da compra ${purchase.code}: ${purchase.package.name}, ${brl(purchase.package.priceCents)} (crédito de ${brl(purchase.package.creditCents)}).`,
+    purchase.payerNote ? `Observação do motorista: ${purchase.payerNote}` : null,
+    purchase.receipt?.key ? 'O motorista anexou um comprovante: veja no painel, em Créditos.' : 'O motorista não anexou comprovante.',
+    `Confira se o Pix com o identificador ${purchase.code} entrou na conta e confirme a compra no painel, em Créditos. Os créditos só são liberados depois da sua confirmação.`,
+    `Contato do motorista: ${driver.email} · ${driver.phone}`,
+  ].filter(Boolean);
+  return sendMail({
+    to,
+    subject: `${brand}: ${driver.name} informou o pagamento de ${brl(purchase.package.priceCents)} (${purchase.code})`,
+    text: `${paragraphs.join('\n\n')}`,
+    html: noticeEmailHtml({ brand, color: tenant?.brand?.primaryColor, title, name: 'equipe', paragraphs, footer: `Mensagem automática da ${brand}.` }),
+  });
+}
+
+/** Avisa o motorista que a compra de créditos foi confirmada (créditos liberados) ou recusada. */
+export function sendCreditReviewedEmail({ to, name, tenant, purchase, confirmed, reason, balanceCents }) {
+  const brand = brandName(tenant);
+  const title = confirmed ? 'Créditos liberados!' : 'Compra de créditos recusada';
+  const paragraphs = confirmed
+    ? [
+        `Confirmamos o pagamento da compra ${purchase.code} (${purchase.package.name}).`,
+        `${brl(purchase.package.creditCents)} entraram no seu saldo. Saldo atual: ${brl(balanceCents ?? 0)}.`,
+        'Bom trabalho e boas corridas!',
+      ]
+    : [
+        `Não conseguimos confirmar o pagamento da compra ${purchase.code} (${purchase.package.name}).`,
+        `Motivo: ${reason}`,
+        'Se você pagou, responda a este e-mail ou fale com a operadora enviando o comprovante.',
+      ];
+  return sendMail({
+    to,
+    subject: `${brand}: ${title.toLowerCase().replace(/^./, (c) => c.toUpperCase())}`,
+    text: `Olá, ${name}!\n\n${paragraphs.join('\n\n')}`,
+    html: noticeEmailHtml({ brand, color: tenant?.brand?.primaryColor, title, name, paragraphs, footer: `Mensagem automática da ${brand}.` }),
+  });
+}
+
 /** Confere host, porta, usuário e senha do SMTP sem enviar nada. */
 export async function verifyMailer() {
   const mailer = getTransporter();

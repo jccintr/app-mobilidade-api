@@ -20,9 +20,8 @@ export const requestRideSchema = z.object({
 
 export const cancelSchema = z.object({ reason: z.string().trim().max(200).optional() });
 
-/** Espera e pedágio informados pelo motorista ao finalizar; entram no cálculo pela regra da operadora. */
+/** Pedágio informado pelo motorista ao finalizar (entra no valor). Não há cobrança de espera. */
 export const finishSchema = z.object({
-  waitMinutes: z.number().min(0).max(120).default(0),
   tolls: z.number().min(0).max(200).default(0),
 });
 

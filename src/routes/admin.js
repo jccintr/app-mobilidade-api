@@ -21,6 +21,16 @@ import {
   updateSettingsSchema,
 } from '../modules/admin/schemas.js';
 import { emailOnlySchema, resetPasswordSchema } from '../modules/accounts/schemas.js';
+import { adminCreditsController as cr } from '../modules/credits/adminCreditsController.js';
+import {
+  adjustWalletSchema,
+  idParam as creditIdParam,
+  listPurchasesQuery,
+  packageSchema,
+  pageQuery,
+  rejectPurchaseSchema,
+  updatePackageSchema,
+} from '../modules/credits/schemas.js';
 
 /** Painel da operadora (tudo filtrado pela operadora do X-Tenant). */
 export const adminRouter = Router();
@@ -68,3 +78,18 @@ adminRouter.get('/settings', asyncHandler(st.get));
 adminRouter.patch('/settings', validate(updateSettingsSchema), asyncHandler(st.update));
 adminRouter.put('/settings/logo', logoUpload, asyncHandler(st.uploadLogo));
 adminRouter.delete('/settings/logo', asyncHandler(st.removeLogo));
+
+// Créditos dos motoristas: pacotes, conferência das compras via Pix, saldo/extrato e ajustes
+const creditId = validate(creditIdParam, 'params');
+adminRouter.get('/credit-packages', asyncHandler(cr.listPackages));
+adminRouter.post('/credit-packages', validate(packageSchema), asyncHandler(cr.createPackage));
+adminRouter.patch('/credit-packages/:id', creditId, validate(updatePackageSchema), asyncHandler(cr.updatePackage));
+adminRouter.delete('/credit-packages/:id', creditId, asyncHandler(cr.deletePackage));
+adminRouter.get('/credit-purchases/summary', asyncHandler(cr.summary));
+adminRouter.get('/credit-purchases', validate(listPurchasesQuery, 'query'), asyncHandler(cr.listPurchases));
+adminRouter.get('/credit-purchases/:id/receipt', creditId, asyncHandler(cr.receipt));
+adminRouter.post('/credit-purchases/:id/confirm', creditId, asyncHandler(cr.confirmPurchase));
+adminRouter.post('/credit-purchases/:id/reject', creditId, validate(rejectPurchaseSchema), asyncHandler(cr.rejectPurchase));
+adminRouter.get('/drivers/:id/wallet', byId, validate(pageQuery, 'query'), asyncHandler(cr.driverWallet));
+adminRouter.post('/drivers/:id/wallet/adjust', byId, validate(adjustWalletSchema), asyncHandler(cr.adjustWallet));
+adminRouter.post('/credits/welcome-existing', asyncHandler(cr.welcomeExisting));

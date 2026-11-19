@@ -90,9 +90,35 @@ export const updateTenantSchema = z
 
 export const createOperatorAdminSchema = z.object({ name, email, password });
 
+// ---- cobrança dos motoristas (taxa por corrida + créditos via Pix) ----
+const centsField = (max) => z.number().int('Use valores em centavos (inteiros).').min(0).max(max);
+export const billingSettingsSchema = z
+  .object({
+    feeFixedCents: centsField(100_00),
+    feePercent: z
+      .number()
+      .min(0)
+      .max(100)
+      .refine((value) => Math.abs(value * 100 - Math.round(value * 100)) < 1e-6, 'Use no máximo 2 casas decimais.'),
+    lowBalanceCents: centsField(1_000_00),
+    welcomeCreditCents: centsField(1_000_00),
+    // A chave chega como digitada e é validada/normalizada no controller (utils/pix.js). "" remove.
+    pix: z
+      .object({
+        key: z.string().trim().max(140),
+        keyType: z.enum(['CPF', 'CNPJ', 'PHONE', 'EMAIL', 'RANDOM']).nullable(),
+        receiverName: z.string().trim().max(60),
+        city: z.string().trim().max(40),
+      })
+      .partial(),
+    notifyEmail: z.union([email, z.literal('')]),
+  })
+  .partial();
+
 // ---- configurações feitas pela própria operadora ----
 export const updateSettingsSchema = z
   .object({
+    billing: billingSettingsSchema,
     brand: z.object({
       displayName: z.string().trim().min(2).max(60),
       primaryColor: z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Use uma cor no formato #RRGGBB.'),

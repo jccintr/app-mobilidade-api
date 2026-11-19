@@ -10,6 +10,7 @@ import { storage } from '../../services/storage/index.js';
 import { isProfileComplete } from '../accounts/driverStatus.js';
 import { sendPush } from '../../services/push.js';
 import { sendDriverReviewEmail, sendPasswordResetCode } from '../../services/mailer.js';
+import { grantWelcomeCredit } from '../../billing/wallet.js';
 
 const DAY = 24 * 60 * 60;
 
@@ -158,6 +159,10 @@ export const adminController = {
     driver.approvedBy = req.user._id;
     driver.rejectionReason = undefined;
     await driver.save();
+    // Crédito de boas-vindas (se a operadora definiu um valor): uma vez por motorista, mesmo se for reaprovado.
+    await grantWelcomeCredit({ tenant: req.tenant, driverId: driver._id, adminId: req.user._id }).catch((error) =>
+      console.error('[wallet] falha ao dar o crédito de boas-vindas', String(driver._id), error),
+    );
     notifyDriver(driver, req.tenant, {
       approved: true,
       type: 'driver:approved',

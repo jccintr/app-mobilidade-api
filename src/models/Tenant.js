@@ -41,6 +41,21 @@ const tenantSchema = new Schema(
       requireDriverApproval: { type: Boolean, default: true },
       requireEmailVerification: { type: Boolean, default: true },
     },
+    // Cobrança dos motoristas: taxa por corrida paga com créditos pré-pagos, comprados via Pix na chave da operadora.
+    // Taxa fixa e percentual zerados = cobrança desligada (ninguém precisa de saldo).
+    billing: {
+      feeFixedCents: { type: Number, default: 0, min: 0 },
+      feePercent: { type: Number, default: 0, min: 0, max: 100 },
+      lowBalanceCents: { type: Number, default: 0, min: 0 }, // avisa o motorista quando o saldo cai abaixo disto
+      welcomeCreditCents: { type: Number, default: 0, min: 0 }, // crédito dado uma vez, na aprovação do cadastro
+      pix: {
+        key: { type: String, trim: true }, // já normalizada (utils/pix.js)
+        keyType: { type: String, enum: ['CPF', 'CNPJ', 'PHONE', 'EMAIL', 'RANDOM'] },
+        receiverName: { type: String, trim: true, maxlength: 60 },
+        city: { type: String, trim: true, maxlength: 40 },
+      },
+      notifyEmail: { type: String, trim: true, lowercase: true, maxlength: 120 }, // recebe o aviso de "Já paguei"
+    },
     // Condições que a operadora liga/desliga no painel e que entram no cálculo da tarifa.
     conditions: {
       rain: { type: Boolean, default: false },

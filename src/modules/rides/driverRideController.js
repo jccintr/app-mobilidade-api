@@ -66,7 +66,7 @@ export const driverRideController = {
   },
 
   async accept(req, res) {
-    res.json(view(await acceptRide({ tenantId: req.tenant._id, rideId: req.valid.id, driver: req.user })));
+    res.json(view(await acceptRide({ tenant: req.tenant, rideId: req.valid.id, driver: req.user })));
   },
 
   async decline(req, res) {
@@ -106,7 +106,7 @@ async function step(req, res, action) {
     actor: 'driver',
     userId,
     reason: req.valid.reason,
-    finish: action === 'finish' ? { waitMinutes: req.valid.waitMinutes ?? 0, tolls: req.valid.tolls ?? 0 } : undefined,
+    finish: action === 'finish' ? { tolls: req.valid.tolls ?? 0 } : undefined,
   });
   res.json(view(ride));
 }

@@ -12,3 +12,4 @@ const single = (field, maxMb) =>
 export const avatarUpload = single('avatar', env.storage.maxImageMb);
 export const documentUpload = single('file', env.storage.maxDocMb);
 export const logoUpload = single('logo', env.storage.maxImageMb);
+export const receiptUpload = single('receipt', env.storage.maxDocMb);

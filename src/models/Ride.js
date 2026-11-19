@@ -63,6 +63,20 @@ const rideSchema = new Schema(
     finalFare: Schema.Types.Mixed, // recalculada ao finalizar, se houve espera/pedágio
     totalCents: { type: Number, required: true }, // valor a cobrar (estimado ou final)
 
+    // Taxa da operadora, calculada no pedido (sobre o valor sem pedágio) e descontada dos créditos do motorista
+    // no aceite. status: none (sem cobrança) | pending (ainda não cobrada) | charged (cobrada) | refunded (devolvida
+    // porque o passageiro cancelou). Se o MOTORISTA cancelar depois de aceitar, a taxa continua cobrada.
+    fee: {
+      baseCents: Number,
+      fixedCents: Number,
+      percent: Number,
+      percentCents: Number,
+      totalCents: { type: Number, default: 0 },
+      status: { type: String, enum: ['none', 'pending', 'charged', 'refunded'], default: 'none' },
+      chargedAt: Date,
+      refundedAt: Date,
+    },
+
     // Dados de exibição congelados (evita consultas e mantém o histórico fiel).
     passengerInfo: { name: String, avatarUrl: String, ratingAvg: Number },
     driverInfo: {

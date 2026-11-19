@@ -3,6 +3,8 @@ import { Passenger } from '../models/Passenger.js';
 import { PricingRule } from '../models/PricingRule.js';
 import { Ride } from '../models/Ride.js';
 import { calculateFare } from '../pricing/engine.js';
+import { billingConfig, computeRideFee, isBillingEnabled } from '../billing/fee.js';
+import { applyWalletEntry, revertWalletEntry, warnLowBalance } from '../billing/wallet.js';
 import { emit, rooms } from '../realtime/emitter.js';
 import { AppError, conflict, forbidden, notFound } from '../utils/errors.js';
 import { toPoint } from '../utils/geo.js';
@@ -55,6 +57,11 @@ export async function createRide({ tenant, passenger, body }) {
   const fare = fares[body.vehicleType];
   if (!fare) throw new AppError(400, 'VEHICLE_NOT_SUPPORTED', 'Esta operadora não atende esse tipo de veículo.');
 
+  // Taxa da operadora: calculada agora (o valor ainda não tem pedágio) e cobrada do motorista no aceite.
+  const billing = billingConfig(tenant);
+  const computed = isBillingEnabled(billing) ? computeRideFee(fare.totalCents, billing) : null;
+  const fee = computed?.totalCents > 0 ? { ...computed, status: 'pending' } : { totalCents: 0, status: 'none' };
+
   const info = passenger.toJSON();
   let ride;
   try {
@@ -72,6 +79,7 @@ export async function createRide({ tenant, passenger, body }) {
       fareInput: inputs[body.vehicleType],
       estimate: fare,
       totalCents: fare.totalCents,
+      fee,
       passengerInfo: { name: info.name, avatarUrl: info.avatarUrl, ratingAvg: passenger.ratingAvg ?? 0 },
     });
   } catch (error) {
@@ -111,14 +119,11 @@ export async function transition({ tenantId, rideId, action, actor, userId, reas
   if (action === 'start') set.startedAt = now;
   if (action === 'finish') {
     set.completedAt = now;
-    if (finish && (finish.waitMinutes > 0 || finish.tolls > 0)) {
+    // Sem cobrança de espera: no fim da corrida só o pedágio (informado pelo motorista) entra no valor.
+    if (finish?.tolls > 0) {
       const rule = await PricingRule.findById(ride.ruleId);
       if (rule) {
-        const fare = calculateFare(rule.config, {
-          ...ride.fareInput,
-          waitMinutes: finish.waitMinutes,
-          tolls: finish.tolls,
-        });
+        const fare = calculateFare(rule.config, { ...ride.fareInput, waitMinutes: 0, tolls: finish.tolls });
         set.finalFare = fare;
         set.totalCents = fare.totalCents;
       }
@@ -128,6 +133,12 @@ export async function transition({ tenantId, rideId, action, actor, userId, reas
     set.cancelledAt = now;
     set.cancelledBy = actor;
     if (reason) set.cancelReason = reason;
+    // Passageiro cancelou depois do aceite: a taxa volta para o motorista. Se foi o MOTORISTA, ela não volta
+    // (evita o combinado "aceita, cancela e leva o passageiro por fora").
+    if (actor === 'passenger' && ride.fee?.status === 'charged') {
+      set['fee.status'] = 'refunded';
+      set['fee.refundedAt'] = now;
+    }
   }
 
   const update = { $set: set };
@@ -136,15 +147,49 @@ export async function transition({ tenantId, rideId, action, actor, userId, reas
   const updated = await Ride.findOneAndUpdate({ ...filter, status: ride.status }, update, { returnDocument: 'after' });
   if (!updated) throw conflict('RIDE_CHANGED', 'A corrida mudou. Atualize e tente de novo.');
 
+  if (set['fee.status'] === 'refunded') {
+    await applyWalletEntry({
+      tenantId,
+      driverId: updated.driverId,
+      type: 'ride_refund',
+      amountCents: updated.fee.totalCents,
+      rideId: updated._id,
+      note: 'Passageiro cancelou: taxa devolvida',
+    }).catch((error) => console.error('[wallet] falha ao devolver a taxa da corrida', String(updated._id), error));
+  }
+
   notifyRide(updated);
   return updated;
 }
 
 // ---------------------------------------------------- aceitar e recusar
 
-export async function acceptRide({ tenantId, rideId, driver }) {
+export async function acceptRide({ tenant, rideId, driver }) {
+  const tenantId = tenant._id;
   const now = new Date();
   const info = driver.toJSON();
+
+  // Cobra a taxa da operadora antes de confirmar o aceite (só passa se houver saldo). Se o aceite não pegar
+  // (oferta vencida, motorista já em corrida), a cobrança é desfeita logo abaixo.
+  const current = await Ride.findOne({ _id: rideId, tenantId }).select('fee');
+  if (!current) throw notFound('RIDE_NOT_FOUND', 'Corrida não encontrada.');
+  const feeCents = current.fee?.status === 'pending' ? current.fee.totalCents : 0;
+  let charge = null;
+  if (feeCents > 0) {
+    charge = await applyWalletEntry({
+      tenantId,
+      driverId: driver._id,
+      type: 'ride_fee',
+      amountCents: -feeCents,
+      rideId: current._id,
+      note: 'Taxa da corrida',
+    });
+    if (!charge) {
+      throw new AppError(402, 'INSUFFICIENT_CREDIT', 'Saldo de créditos insuficiente para aceitar esta corrida. Compre créditos para continuar.');
+    }
+  }
+  const undoCharge = () => (charge?.entry ? revertWalletEntry(charge.entry) : Promise.resolve());
+
   let updated;
   try {
     updated = await Ride.findOneAndUpdate(
@@ -161,6 +206,7 @@ export async function acceptRide({ tenantId, rideId, driver }) {
           driverId: driver._id,
           activeDriverId: driver._id,
           acceptedAt: now,
+          ...(feeCents > 0 ? { 'fee.status': 'charged', 'fee.chargedAt': now } : {}),
           'offers.$[offer].status': 'accepted',
           driverInfo: {
             name: info.name,
@@ -173,15 +219,18 @@ export async function acceptRide({ tenantId, rideId, driver }) {
       { returnDocument: 'after', arrayFilters: [{ 'offer.driverId': driver._id, 'offer.status': 'pending' }] },
     );
   } catch (error) {
+    await undoCharge();
     if (isDuplicateKey(error)) throw conflict('DRIVER_BUSY', 'Você já está em uma corrida.');
     throw error;
   }
 
   if (!updated) {
+    await undoCharge();
     const exists = await Ride.exists({ _id: rideId, tenantId });
     if (!exists) throw notFound('RIDE_NOT_FOUND', 'Corrida não encontrada.');
     throw conflict('OFFER_EXPIRED', 'Esta corrida não está mais disponível.');
   }
+  warnLowBalance({ tenant, result: charge });
   notifyRide(updated);
   return updated;
 }

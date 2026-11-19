@@ -47,6 +47,12 @@ const driverSchema = new Schema(
     locationUpdatedAt: Date,
     ratingAvg: { type: Number, default: 0 },
     ratingCount: { type: Number, default: 0 },
+
+    // Créditos pré-pagos: a taxa da operadora de cada corrida sai daqui, no aceite. Movimentações em WalletEntry.
+    wallet: {
+      balanceCents: { type: Number, default: 0, min: 0 },
+      welcomeGrantedAt: Date,
+    },
   },
   { timestamps: true },
 );

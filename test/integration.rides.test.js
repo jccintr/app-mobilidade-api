@@ -189,13 +189,13 @@ test('ciclo completo da corrida (banco real)', { skip: !uri && 'defina TEST_MONG
   });
 
   let estimateTotal;
-  await t.test('chegada, início e fim (com espera) fecham o valor pela regra', async () => {
+  await t.test('chegada, início e fim (com pedágio) fecham o valor pela regra', async () => {
     estimateTotal = (await api('GET', `/passengers/rides/${rideId}`, { token: pToken })).body.ride.total;
     assert.equal((await api('POST', `/drivers/rides/${rideId}/start`, { token: dToken })).status, 409, 'não pode iniciar sem chegar');
     assert.equal((await api('POST', `/drivers/rides/${rideId}/arrive`, { token: dToken })).body.ride.status, 'arrived');
     assert.equal((await api('POST', `/drivers/rides/${rideId}/start`, { token: dToken })).body.ride.status, 'in_progress');
     assert.equal((await api('POST', `/passengers/rides/${rideId}/cancel`, { token: pToken, body: {} })).status, 409, 'em andamento não cancela');
-    const done = await api('POST', `/drivers/rides/${rideId}/finish`, { token: dToken, body: { waitMinutes: 10 } });
+    const done = await api('POST', `/drivers/rides/${rideId}/finish`, { token: dToken, body: { tolls: 6.5 } });
     assert.equal(done.status, 200, JSON.stringify(done.body));
     assert.equal(done.body.ride.status, 'completed');
     assert.ok(done.body.ride.total > estimateTotal, `esperava total > ${estimateTotal}, veio ${done.body.ride.total}`);
